@@ -1,0 +1,22 @@
+{
+    "model": "XGBoost",
+    "model_purpose": "DriveGuard-X IMU classification",
+    "feature_count": 42,
+    "feature_representation": "Manually reduced statistical features",
+    "classes": [
+        1,
+        2,
+        3,
+        4
+    ],
+    "n_estimators": 300,
+    "max_depth": 3,
+    "learning_rate": 0.03,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "min_child_weight": 1,
+    "random_state": 42,
+    "test_accuracy": 0.7428571428571429,
+    "test_macro_f1": 0.7462234283129805,
+    "test_weighted_f1": 0.7224487949861084
+}

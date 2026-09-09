@@ -11,10 +11,15 @@ app = FastAPI(
     version="0.1.0",
     description=(
         "Inference backend for the DriveGuard-X research prototype. "
-        "The current implementation exposes the Battery AI model; "
-        "IMU, Road, Fusion, Attribution and Protection modules will be added later."
+        "The backend currently exposes the Battery AI and IMU AI models. "
+        "Road, Fusion, Attribution and Protection modules will be added later."
     ),
 )
+
+
+# ============================================================
+# CORS
+# ============================================================
 
 app.add_middleware(
     CORSMiddleware,
@@ -24,13 +29,34 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(router, prefix="/api/v1")
 
+# ============================================================
+# API ROUTES
+# ============================================================
+
+app.include_router(
+    router,
+    prefix="/api/v1",
+)
+
+
+# ============================================================
+# STARTUP
+# ============================================================
 
 @app.on_event("startup")
 def startup_event() -> None:
+    """
+    Load all currently available AI models when the
+    FastAPI application starts.
+    """
+
     load_models()
 
+
+# ============================================================
+# ROOT
+# ============================================================
 
 @app.get("/", tags=["system"])
 def root():
