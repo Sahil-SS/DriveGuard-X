@@ -23,7 +23,7 @@ def preprocess(y, sr=SR, normalize="none"):
     if len(y) < SR:
         y = np.pad(y, (0, SR - len(y)))
         
-    y = sps.sosfilt(_HP, y - np.mean(y)).astype(np.float32)
+    y = np.asarray(sps.sosfilt(_HP, y - np.mean(y)), dtype=np.float32)
     if normalize == "peak":
         y = y / (np.max(np.abs(y)) + 1e-9)
     return y.astype(np.float32)
