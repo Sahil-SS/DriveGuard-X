@@ -17,6 +17,8 @@ def predict_battery_soh(features: BatteryFeatureVector) -> dict:
         raise RuntimeError("Battery feature schema is missing.")
 
     values = features.model_dump()
+    if not all(math.isfinite(value) for value in values.values()):
+        raise ValueError("Battery features must contain only finite numeric values.")
 
     missing = [name for name in schema if name not in values]
     extra = [name for name in values if name not in schema]

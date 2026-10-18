@@ -84,6 +84,10 @@ def extract_imu_features(samples: list[dict]) -> pd.DataFrame:
             f"Missing IMU columns: {missing_columns}"
         )
 
+    df = df[required_columns].astype(float)
+    if not np.isfinite(df.to_numpy()).all():
+        raise ValueError("IMU samples must contain only finite numeric values.")
+
     features = {}
 
     # Accelerometer features
@@ -110,7 +114,9 @@ def extract_imu_features(samples: list[dict]) -> pd.DataFrame:
         features[f"GyroMedian{axis}"] = df[column].median()
         features[f"GyroStd{axis}"] = df[column].std()
 
-    feature_df = pd.DataFrame([features])
+    # Constant four-sample windows have undefined skew/kurtosis in pandas.
+    # Use neutral zero values instead of silently passing NaNs to XGBoost.
+    feature_df = pd.DataFrame([features]).replace([np.inf, -np.inf], np.nan).fillna(0.0)
 
     # Force the exact feature order expected by the model.
     feature_df = feature_df[IMU_FEATURE_NAMES]
