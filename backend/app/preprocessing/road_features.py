@@ -59,6 +59,12 @@ def extract_features(win):
     for i in range(13):
         f["mfcc%d_mean" % i] = float(mf[i].mean())
         f["mfcc%d_std" % i] = float(mf[i].std())
+    # Silent or nearly silent windows can produce NaN/inf in kurtosis and
+    # logarithmic spectral statistics. Models must never receive non-finite
+    # values, so replace those edge-case outputs with a neutral zero.
+    for name, value in f.items():
+        if not np.isfinite(value):
+            f[name] = 0.0
     return f
 
 def predict_window(bundle, win):
