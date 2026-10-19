@@ -40,6 +40,7 @@ All HTTP bodies are JSON. Swagger is available at `http://127.0.0.1:8000/docs`.
 | POST | `/sessions` | Start durable recording |
 | POST | `/sessions/{session_id}/stop` | Finalize recording and start report generation |
 | GET | `/sessions` | List recent sessions |
+| GET | `/sessions/active` | Recover the currently recording session after a dashboard reload |
 | GET | `/sessions/{session_id}` | Read session detail and snapshots |
 | GET | `/sessions/{session_id}/report` | Read report status/result |
 

@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   api,
   getReport,
+  getActiveSession,
   getSessions,
   liveUrl,
   startSession,
@@ -73,8 +74,11 @@ export default function Dashboard() {
     };
   }, []);
   useEffect(() => {
-    getSessions()
-      .then((x) => setHistory(x.items || []))
+    Promise.all([getSessions(), getActiveSession()])
+      .then(([sessions, active]) => {
+        setHistory(sessions.items || []);
+        if (active?.status === "recording") setSession(active);
+      })
       .catch(() => setHistory([]));
   }, []);
   const fused = snap.fused;

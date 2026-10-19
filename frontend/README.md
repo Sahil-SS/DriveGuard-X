@@ -29,5 +29,6 @@ Open `http://localhost:3000`. The dashboard connects to the single backend WebSo
 - **Stop & Generate Summary** calls `POST /api/v1/sessions/{id}/stop`.
 - The dashboard polls `GET /api/v1/sessions/{id}/report` until report generation completes or fails.
 - Previous sessions are loaded from `GET /api/v1/sessions`, and reports reopen through the report endpoint.
+- If the dashboard reloads while MongoDB still has an active session, it calls `GET /api/v1/sessions/active` and re-enables Stop for that session.
 
 The frontend does not call `/inference`, submit duplicate sensor payloads, control PWM, or fabricate telemetry.

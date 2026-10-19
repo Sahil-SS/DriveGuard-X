@@ -1,0 +1,4 @@
+.env
+*.cred.json
+flows_cred.json
+node_modules/

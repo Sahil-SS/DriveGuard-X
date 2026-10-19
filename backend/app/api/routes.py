@@ -366,6 +366,16 @@ async def list_sessions(limit: int = Query(20, ge=1, le=100), offset: int = Quer
         raise HTTPException(status_code=503, detail="MongoDB recording is unavailable") from exc
 
 
+@router.get("/sessions/active", response_model=SessionSummary | None, tags=["recording"])
+async def active_session():
+    """Return the currently recording session so a reloaded dashboard can recover it."""
+    try:
+        doc = await session_store.active()
+        return _summary(doc) if doc else None
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="MongoDB recording is unavailable") from exc
+
+
 @router.get("/sessions/{session_id}", response_model=SessionDetailResponse, tags=["recording"])
 async def session_detail(session_id: str):
     try:

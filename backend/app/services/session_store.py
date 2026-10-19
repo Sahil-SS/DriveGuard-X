@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
+from pymongo import ReturnDocument
+
 from app.core.config import settings
 
 
@@ -67,7 +69,7 @@ class SessionStore:
         result = await self._database().sessions.find_one_and_update(
             {"session_id": session_id, "status": "recording"},
             {"$set": {"status": "finalized", "ended_at": now, "report_status": "pending"}},
-            return_document=1,
+            return_document=ReturnDocument.AFTER,
         )
         return result
 

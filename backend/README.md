@@ -188,6 +188,7 @@ For a frontend on another device, use `--host 0.0.0.0` and replace `127.0.0.1` w
 - Live reads: `GET /api/v1/live/snapshot`, `WS /api/v1/live/ws`
 - Fused live inference: `GET /api/v1/live/inference`
 - Recording: `POST /api/v1/sessions`, `POST /api/v1/sessions/{id}/stop`, `GET /api/v1/sessions`, `GET /api/v1/sessions/{id}`, `GET /api/v1/sessions/{id}/report`
+- Active-session recovery: `GET /api/v1/sessions/active`
 
 See [api_docs.md](./api_docs.md) for complete JSON examples and Node-RED wiring.
 

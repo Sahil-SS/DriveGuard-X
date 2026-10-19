@@ -33,6 +33,7 @@ export const startSession = () => api<any>("/sessions", { method: "POST" });
 export const stopSession = (id: string) =>
   api<any>(`/sessions/${id}/stop`, { method: "POST" });
 export const getSessions = () => api<any>("/sessions?limit=20");
+export const getActiveSession = () => api<any | null>("/sessions/active");
 export const getReport = (id: string) => api<any>(`/sessions/${id}/report`);
 export const getLiveInference = () => api<Live | null>("/live/inference");
 export function liveUrl() {
