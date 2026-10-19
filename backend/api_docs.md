@@ -34,8 +34,14 @@ All HTTP bodies are JSON. Swagger is available at `http://127.0.0.1:8000/docs`.
 | POST | `/live/battery` | Process and cache latest battery result |
 | POST | `/live/imu` | Process and cache latest IMU result |
 | POST | `/live/road` | Process and cache latest road result |
-| GET | `/live/snapshot` | Read latest cached readings |
+| GET | `/live/snapshot` | Read latest cached readings and fused inference |
+| GET | `/live/inference` | Read the latest complete fused inference result |
 | WS | `/live/ws` | Receive the latest snapshot every second |
+| POST | `/sessions` | Start durable recording |
+| POST | `/sessions/{session_id}/stop` | Finalize recording and start report generation |
+| GET | `/sessions` | List recent sessions |
+| GET | `/sessions/{session_id}` | Read session detail and snapshots |
+| GET | `/sessions/{session_id}/report` | Read report status/result |
 
 ## 3. Input contracts
 
@@ -262,11 +268,32 @@ Returns:
 {
   "battery": null,
   "imu": null,
-  "road": null
+  "road": null,
+  "fused": null,
+  "sequence": 0
 }
 ```
 
 Before a source has posted data, its value is `null`. After updates, each value contains the corresponding live response. The snapshot is process-local; it resets when the server restarts.
+
+When all three modalities have produced results, `fused` contains:
+
+```json
+{
+  "timestamp": "2026-10-19T11:00:00Z",
+  "sequence": 12,
+  "battery_state": {"soh_percent": 91.07, "stressed": false},
+  "driving_behavior": {"class": "normal", "raw_class_id": 1},
+  "road_condition": {"class": "impact", "confidence": 0.67},
+  "attribution": {"likely_cause": "normal", "confidence": 0.95},
+  "protection": {"action": "maintain_power", "pwm_limit_pct": 100},
+  "available_modalities": ["battery", "imu", "road"]
+}
+```
+
+### GET `/live/inference`
+
+Returns only the latest complete fused result. It returns `null` until battery, IMU, and road results have all been received. This is the REST equivalent of the `fused` field in `/live/snapshot` and the WebSocket payload.
 
 ### WebSocket `/live/ws`
 
@@ -276,17 +303,41 @@ Connect to:
 ws://127.0.0.1:8000/api/v1/live/ws
 ```
 
-The server sends a JSON snapshot approximately once per second. JavaScript example:
+The server sends a JSON snapshot approximately once per second. Timestamps are serialized as ISO-8601 strings. JavaScript example:
 
 ```javascript
 const socket = new WebSocket("ws://127.0.0.1:8000/api/v1/live/ws");
 socket.onmessage = (event) => {
   const snapshot = JSON.parse(event.data);
-  console.log(snapshot.battery, snapshot.imu, snapshot.road);
+  console.log(snapshot.fused?.attribution, snapshot.fused?.protection);
 };
 ```
 
-## 6. Node-RED wiring
+## 6. Recording and reports
+
+Start a recording session:
+
+```http
+POST /api/v1/sessions
+```
+
+Response:
+
+```json
+{"session_id":"<32-character-id>","started_at":"2026-10-19T11:00:00Z","status":"recording"}
+```
+
+Stop and finalize:
+
+```http
+POST /api/v1/sessions/{session_id}/stop
+```
+
+Stopping prevents further snapshots from being appended and starts report generation. Poll `GET /api/v1/sessions/{session_id}/report` until `report_status` is `completed` or `failed`. The report contains evidence-based battery, behavior, road, attribution, protection, recommendations, and limitations fields.
+
+`GET /api/v1/sessions` lists recent sessions. `GET /api/v1/sessions/{session_id}` returns metadata and up to the latest 1,000 stored snapshots. MongoDB credentials and Groq credentials are server-side only.
+
+## 7. Node-RED wiring
 
 Recommended flow:
 
@@ -319,13 +370,13 @@ Suggested frontend mappings:
 | Cause | `attribution.likely_cause` |
 | Protection | `protection.action` and `protection.pwm_limit_pct` |
 
-## 7. Errors
+## 8. Errors
 
 - `422`: invalid JSON, missing fields, wrong types, fewer than four IMU samples, or non-finite sensor values.
 - `500`: model/preprocessing failure; inspect backend logs.
 - `503`: model not available or startup loading failed.
 
-## 8. Verification
+## 9. Verification
 
 With the API running:
 
@@ -337,4 +388,3 @@ cd O:\DriveGuard_X\backend
 ```
 
 The live test checks battery, IMU, road, snapshot, and WebSocket behavior. The attribution test checks all five attribution branches.
-

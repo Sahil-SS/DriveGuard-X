@@ -28,6 +28,12 @@ Node-RED / sensor gateway
 
 The combined endpoint runs all three model services and then passes their outputs to the attribution and protection logic. The live endpoints run one model at a time and keep the latest processed values in an in-process snapshot for an instrument-cluster frontend.
 
+## Integrated dashboard workflow
+
+The ESP32/Node-RED gateway remains the only sensor producer. It posts battery, IMU, and road-audio windows to the three `/live/*` endpoints. Once all three modality results are available, the backend creates one fused result containing battery state, driving behavior, road condition, cause attribution, and protection guidance. The frontend reads that result from `GET /api/v1/live/inference` or the WebSocket at `/api/v1/live/ws`; it never submits sensor data or runs inference.
+
+When recording is active, fused results are appended asynchronously to MongoDB. Stopping the session finalizes the record and starts report generation. Groq receives bounded evidence summaries and representative snapshots; the report is stored with the session and can be read later through the report endpoint. If Groq is unavailable, the backend preserves the session and returns a deterministic report with limitations.
+
 ## Code structure
 
 | Path | Responsibility |
@@ -42,6 +48,8 @@ The combined endpoint runs all three model services and then passes their output
 | `app/services/road_service.py` | Road audio prediction. |
 | `app/services/attribution_service.py` | Combines predictions into cause and protection. |
 | `app/services/live_telemetry.py` | Stores the latest processed reading. |
+| `app/services/session_store.py` | MongoDB session persistence and indexes. |
+| `app/services/report_service.py` | Bounded evidence aggregation and Groq/fallback reports. |
 | `app/preprocessing/` | Battery, IMU, and road feature extraction. |
 | `models/` | Model files and metadata. |
 | `tests/` | Endpoint and attribution verification scripts. |
@@ -145,6 +153,8 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
+Copy `.env.example` to `.env` and set `MONGODB_URL`, `MONGODB_DATABASE`, `GROQ_API_KEY`, and an accessible `GROQ_MODEL`. The real `.env` is ignored by Git and must never be committed.
+
 If activation is blocked:
 
 ```powershell
@@ -176,6 +186,8 @@ For a frontend on another device, use `--host 0.0.0.0` and replace `127.0.0.1` w
 - Combined decision: `POST /api/v1/inference`
 - Live inputs: `POST /api/v1/live/battery`, `POST /api/v1/live/imu`, `POST /api/v1/live/road`
 - Live reads: `GET /api/v1/live/snapshot`, `WS /api/v1/live/ws`
+- Fused live inference: `GET /api/v1/live/inference`
+- Recording: `POST /api/v1/sessions`, `POST /api/v1/sessions/{id}/stop`, `GET /api/v1/sessions`, `GET /api/v1/sessions/{id}`, `GET /api/v1/sessions/{id}/report`
 
 See [api_docs.md](./api_docs.md) for complete JSON examples and Node-RED wiring.
 
@@ -188,15 +200,33 @@ cd O:\DriveGuard_X\backend
 .\.venv\Scripts\python.exe tests\test_attribution_endpoint.py
 .\.venv\Scripts\python.exe tests\test_live_telemetry_endpoints.py
 .\.venv\Scripts\python.exe -m pytest -q
+
+# Real checked-in model simulation with printed outputs
+.\.venv\Scripts\python.exe scripts\simulate_backend_pipeline.py
+
+# Only the real-artifact end-to-end tests
+.\.venv\Scripts\python.exe -m pytest -q tests\test_end_to_end_model_pipeline.py
+
+# Check Groq access without printing the API key
+.\.venv\Scripts\python.exe scripts\check_groq_connection.py
+
+# Generate a bounded report from real model evidence
+.\.venv\Scripts\python.exe scripts\simulate_report_generation.py
 ```
 
 The attribution script checks `normal`, `driver_induced`, `road_induced`, `battery_degraded`, and `mixed_or_high_stress`.
+The model simulation validates the configured battery, IMU, road, fused inference, and protection output contracts. Session API tests use an in-memory fake; use MongoDB separately for a real persistence test.
 
 ## Operational notes
 
-- Live telemetry is process-local memory. For multiple workers or durable data, use Redis, a database, or a message broker.
+- Live telemetry remains process-local, but fused inference snapshots are durably appended to MongoDB while a recording session is active.
+- Set `MONGODB_URL` and `MONGODB_DATABASE` before starting recording. If MongoDB is unavailable, live inference continues and session endpoints return a clear 503.
+- Set `GROQ_API_KEY` to enable natural-language reports. Without it, stopping a session still produces a deterministic evidence report with limitations.
 - Live endpoints return processed predictions, not raw sensor streams; send updates periodically from Node-RED or a sensor gateway.
 - The WebSocket sends the latest snapshot once per second and does not ingest sensor data.
 - Use `/inference` when the frontend needs one combined attribution/protection decision.
 - The battery and road artifacts require representative real-world validation before safety-critical use.
 
+## Current verification
+
+The checked-in integration suite validates the real model artifacts, combined fusion, live HTTP responses, fused WebSocket serialization, and the session lifecycle using a Mongo-compatible in-memory test double. A real MongoDB deployment and physical ESP32 should still be tested before field use. The current verified model simulation produces approximately 91.07% battery SOH, normal driving, impact road classification, normal attribution, and a 100% PWM limit for the representative input.

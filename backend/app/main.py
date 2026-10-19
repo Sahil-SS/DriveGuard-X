@@ -11,8 +11,7 @@ app = FastAPI(
     version="0.1.0",
     description=(
         "Inference backend for the DriveGuard-X research prototype. "
-        "The backend currently exposes the Battery AI and IMU AI models. "
-        "Road, Fusion, Attribution and Protection modules will be added later."
+        "Inference, multimodal attribution, protection, live telemetry, durable recording, and driver reports."
     ),
 )
 

@@ -79,26 +79,55 @@ class AttributionEngine:
                 protection_action = "balanced_power_limitation"
                 pwm_limit = 70
 
+        return self._result(
+            soh_pct, is_battery_stressed, driving_label, raw_pred_class,
+            road_class, road_confidence, cause, attribution_confidence,
+            protection_action, pwm_limit,
+        )
+
+    def fuse_results(self, battery: dict, imu: dict, road: dict) -> dict:
+        """Fuse already-produced live model results without rerunning AI."""
+        soh_pct = float(battery.get("soh_percent", 0.0))
+        stressed = bool(battery.get("stressed", False))
+        raw_class = int(imu.get("predicted_class", 0))
+        driving = self.imu_class_names.get(raw_class, "unknown")
+        road_class = str(road.get("road_class", "unavailable"))
+        confidence = float(road.get("confidence", 0.0))
+        disturbed = road_class in {"rough", "moderately_rough", "impact"} and confidence >= ROAD_DISTURBANCE_CONFIDENCE_THRESHOLD
+        cause, attr_conf, action, pwm = "normal", 0.95, "maintain_power", 100
+        if stressed:
+            if driving != "normal" and not disturbed:
+                cause, attr_conf, action, pwm = "driver_induced", 0.88, "moderate_power_limitation", 80
+            elif disturbed and driving == "normal" and confidence > 0.6:
+                cause, attr_conf, action, pwm = "road_induced", 0.82, "avoid_unnecessary_severe_intervention", 90
+            elif soh_pct < 75 and driving == "normal" and not disturbed:
+                cause, attr_conf, action, pwm = "battery_degraded", 0.92, "strong_battery_protection", 65
+            else:
+                cause, attr_conf, action, pwm = "mixed_or_high_stress", 0.75, "balanced_power_limitation", 70
+        return self._result(soh_pct, stressed, driving, raw_class, road_class, confidence, cause, attr_conf, action, pwm)
+
+    @staticmethod
+    def _result(soh_pct, stressed, driving, raw_class, road_class, confidence, cause, attr_conf, action, pwm):
         return {
             "battery_state": {
                 "soh_percent": soh_pct,
-                "stressed": is_battery_stressed
+                "stressed": stressed
             },
             "driving_behavior": {
-                "class": driving_label,
-                "raw_class_id": raw_pred_class
+                "class": driving,
+                "raw_class_id": raw_class
             },
             "road_condition": {
                 "class": road_class,
-                "confidence": road_confidence
+                "confidence": confidence
             },
             "attribution": {
                 "likely_cause": cause,
-                "confidence": attribution_confidence
+                "confidence": attr_conf
             },
             "protection": {
-                "action": protection_action,
-                "pwm_limit_pct": pwm_limit
+                "action": action,
+                "pwm_limit_pct": pwm
             }
         }
 

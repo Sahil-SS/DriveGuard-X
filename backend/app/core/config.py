@@ -21,6 +21,12 @@ class Settings(BaseSettings):
     )
 
     cors_origins: list[str] = ["*"]
+    mongodb_url: str = "mongodb://127.0.0.1:27017"
+    mongodb_database: str = "driveguard_x"
+    groq_api_key: str | None = None
+    groq_model: str = "llama-3.1-8b-instant"
+    recording_max_snapshots: int = 20000
+    report_timeout_seconds: float = 30.0
 
     model_config = SettingsConfigDict(
         env_file=".env",

@@ -1,7 +1,8 @@
 import asyncio
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, Query
+from fastapi.encoders import jsonable_encoder
 
 from app.api.schemas import (
     BatteryFeatureVector,
@@ -15,6 +16,8 @@ from app.api.schemas import (
     LiveIMUResponse,
     LiveRoadResponse,
     LiveSnapshotResponse,
+    FusedInferenceResponse, SessionStartResponse, SessionListResponse,
+    SessionDetailResponse, ReportResponse, SessionSummary,
 )
 
 from app.services.battery_service import predict_battery_soh
@@ -23,9 +26,26 @@ from app.services.road_service import road_service
 from app.api.schemas import CombinedInferenceRequest, AttributionResponse
 from app.services.attribution_service import attribution_engine
 from app.services.live_telemetry import live_telemetry
+from app.services.session_store import session_store
+from app.services.report_service import generate_report
 
 
 router = APIRouter()
+
+
+async def _record_fused(snapshot: dict | None) -> None:
+    if snapshot is not None:
+        try:
+            await session_store.append_snapshot(snapshot)
+        except Exception:
+            # Live telemetry must remain available if MongoDB is down.
+            return
+
+
+def _summary(doc: dict) -> dict:
+    started = doc.get("started_at")
+    ended = doc.get("ended_at")
+    return {"session_id": doc["session_id"], "started_at": started, "ended_at": ended, "status": doc.get("status", "unknown"), "snapshot_count": doc.get("snapshot_count", len(doc.get("snapshots", []))), "report_status": doc.get("report_status", "not_requested"), "duration_seconds": (ended - started).total_seconds() if started and ended else None}
 
 
 # ============================================================
@@ -200,7 +220,7 @@ def combined_inference(request: CombinedInferenceRequest):
     response_model=LiveBatteryResponse,
     tags=["live telemetry"],
 )
-def live_battery(features: BatteryFeatureVector):
+async def live_battery(features: BatteryFeatureVector):
     """Process and cache the latest battery telemetry/features."""
     try:
         prediction = predict_battery_soh(features)
@@ -214,7 +234,7 @@ def live_battery(features: BatteryFeatureVector):
                 or features.load_current_abs_max > 2.0
             ),
         }
-        live_telemetry.update("battery", reading)
+        asyncio.create_task(_record_fused(live_telemetry.update("battery", reading)))
         return reading
     except (ValueError, RuntimeError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -225,7 +245,7 @@ def live_battery(features: BatteryFeatureVector):
     response_model=LiveIMUResponse,
     tags=["live telemetry"],
 )
-def live_imu(request: IMUPredictionRequest):
+async def live_imu(request: IMUPredictionRequest):
     """Process and cache the latest four-sample IMU window."""
     try:
         prediction = predict_imu(request)
@@ -243,7 +263,7 @@ def live_imu(request: IMUPredictionRequest):
                 prediction["predicted_class"], "unknown"
             ),
         }
-        live_telemetry.update("imu", reading)
+        asyncio.create_task(_record_fused(live_telemetry.update("imu", reading)))
         return reading
     except (ValueError, RuntimeError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -254,7 +274,7 @@ def live_imu(request: IMUPredictionRequest):
     response_model=LiveRoadResponse,
     tags=["live telemetry"],
 )
-def live_road(request: RoadPredictRequest):
+async def live_road(request: RoadPredictRequest):
     """Process and cache the latest INMP441 audio window."""
     try:
         prediction = road_service.predict(request.samples)
@@ -263,7 +283,7 @@ def live_road(request: RoadPredictRequest):
             "sample_count": len(request.samples),
             **prediction,
         }
-        live_telemetry.update("road", reading)
+        asyncio.create_task(_record_fused(live_telemetry.update("road", reading)))
         return reading
     except (ValueError, RuntimeError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -279,13 +299,94 @@ def live_snapshot():
     return live_telemetry.snapshot()
 
 
+@router.get(
+    "/live/inference",
+    response_model=FusedInferenceResponse | None,
+    tags=["live telemetry"],
+)
+def live_inference():
+    """Return the latest complete backend-owned fused inference result."""
+    return live_telemetry.snapshot().get("fused")
+
+
 @router.websocket("/live/ws")
 async def live_websocket(websocket: WebSocket):
     """Stream the latest telemetry snapshot once per second to a dashboard."""
     await websocket.accept()
     try:
         while True:
-            await websocket.send_json(live_telemetry.snapshot())
+            await websocket.send_json(jsonable_encoder(live_telemetry.snapshot()))
             await asyncio.sleep(1)
     except WebSocketDisconnect:
         return
+
+
+@router.post("/sessions", response_model=SessionStartResponse, tags=["recording"])
+async def start_session():
+    try:
+        doc = await session_store.start()
+        return {"session_id": doc["session_id"], "started_at": doc["started_at"], "status": doc["status"]}
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="MongoDB recording is unavailable") from exc
+
+
+@router.post("/sessions/{session_id}/stop", response_model=SessionSummary, tags=["recording"])
+async def stop_session(session_id: str):
+    if len(session_id) != 32 or not all(c in "0123456789abcdef" for c in session_id):
+        raise HTTPException(status_code=422, detail="Invalid session ID")
+    try:
+        doc = await session_store.stop(session_id)
+        if not doc:
+            raise HTTPException(status_code=404, detail="Active session not found")
+        asyncio.create_task(_generate_report(session_id, doc))
+        return _summary(doc)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="MongoDB recording is unavailable") from exc
+
+
+async def _generate_report(session_id: str, doc: dict) -> None:
+    try:
+        await session_store.set_report(session_id, "generating")
+        report = await generate_report(doc)
+        await session_store.set_report(session_id, "completed", report=report)
+    except Exception as exc:
+        await session_store.set_report(session_id, "failed", error=type(exc).__name__)
+
+
+@router.get("/sessions", response_model=SessionListResponse, tags=["recording"])
+async def list_sessions(limit: int = Query(20, ge=1, le=100), offset: int = Query(0, ge=0)):
+    try:
+        items, total = await session_store.list(limit, offset)
+        return {"items": [_summary(item) for item in items], "total": total, "limit": limit, "offset": offset}
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="MongoDB recording is unavailable") from exc
+
+
+@router.get("/sessions/{session_id}", response_model=SessionDetailResponse, tags=["recording"])
+async def session_detail(session_id: str):
+    try:
+        doc = await session_store.get(session_id)
+        if not doc:
+            raise HTTPException(status_code=404, detail="Session not found")
+        return {**_summary(doc), "snapshots": doc.get("snapshots", [])[-1000:], "events": doc.get("events", [])}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="MongoDB recording is unavailable") from exc
+
+
+@router.get("/sessions/{session_id}/report", response_model=ReportResponse, tags=["recording"])
+async def session_report(session_id: str):
+    try:
+        doc = await session_store.get(session_id)
+        if not doc:
+            raise HTTPException(status_code=404, detail="Session not found")
+        return {"session_id": session_id, "report_status": doc.get("report_status", "not_requested"), "report": doc.get("report"), "generated_at": doc.get("report_generated_at"), "error": doc.get("report_error")}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="MongoDB recording is unavailable") from exc

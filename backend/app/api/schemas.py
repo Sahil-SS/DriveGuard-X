@@ -219,7 +219,52 @@ class LiveRoadResponse(BaseModel):
     probabilities: dict[str, float]
 
 
+class FusedInferenceResponse(AttributionResponse):
+    timestamp: datetime
+    sequence: int
+    source_timestamps: dict[str, datetime | None] = Field(default_factory=dict)
+    available_modalities: list[str] = Field(default_factory=list)
+
+
 class LiveSnapshotResponse(BaseModel):
     battery: LiveBatteryResponse | None = None
     imu: LiveIMUResponse | None = None
     road: LiveRoadResponse | None = None
+    fused: FusedInferenceResponse | None = None
+    sequence: int = 0
+
+
+class SessionStartResponse(BaseModel):
+    session_id: str
+    started_at: datetime
+    status: str
+
+
+class SessionSummary(BaseModel):
+    session_id: str
+    started_at: datetime
+    ended_at: datetime | None = None
+    status: str
+    snapshot_count: int = 0
+    report_status: str
+    duration_seconds: float | None = None
+
+
+class SessionListResponse(BaseModel):
+    items: list[SessionSummary]
+    total: int
+    limit: int
+    offset: int
+
+
+class SessionDetailResponse(SessionSummary):
+    snapshots: list[FusedInferenceResponse] = Field(default_factory=list)
+    events: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class ReportResponse(BaseModel):
+    session_id: str
+    report_status: str
+    report: dict[str, Any] | None = None
+    generated_at: datetime | None = None
+    error: str | None = None
