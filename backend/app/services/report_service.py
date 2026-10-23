@@ -58,7 +58,8 @@ async def generate_report(session: dict[str, Any]) -> dict[str, Any]:
     try:
         from groq import Groq
         client = Groq(api_key=settings.groq_api_key)
-        prompt = "Return JSON only with keys session_overview,battery_analysis,driving_behavior_analysis,road_condition_analysis,cause_attribution_summary,significant_events,protection_summary,recommendations,limitations. Use only this evidence; never invent values. Separate observed facts from recommendations. Evidence: " + json.dumps(evidence, default=str)
+        prompt = """Return JSON only with keys session_overview,driver_score,driving_behavior_analysis,observed_strengths,areas_to_improve,next_drive_recommendations,road_condition_analysis,cause_attribution_summary,significant_events,protection_summary,limitations.
+This is a DRIVER BEHAVIOR REPORT, not a vehicle maintenance report. Analyze acceleration, braking, cornering, stress attribution, road context, and protection events. Use only the supplied evidence; never invent measurements. Clearly distinguish observed facts from advice. Make next_drive_recommendations specific, practical, and phrased as actions the driver can take on the next drive. If evidence is sparse, say so. Evidence: """ + json.dumps(evidence, default=str)
         response = await asyncio.to_thread(client.chat.completions.create, model=settings.groq_model, messages=[{"role": "system", "content": "You are a careful vehicle telemetry analyst."}, {"role": "user", "content": prompt}], temperature=0.1, response_format={"type": "json_object"}, timeout=settings.report_timeout_seconds)
         content = response.choices[0].message.content or "{}"
         parsed = json.loads(content)
@@ -70,10 +71,23 @@ async def generate_report(session: dict[str, Any]) -> dict[str, Any]:
 
 
 def deterministic_report(session: dict[str, Any], evidence: dict[str, Any], limitation: str) -> dict[str, Any]:
+    behavior = evidence["behavior_counts"]
+    aggressive = sum(count for name, count in behavior.items() if name not in {"normal", "unknown"})
+    total = max(evidence["snapshot_count"], 1)
+    recommendations = []
+    if aggressive:
+        recommendations.append("Accelerate and brake progressively; leave more following distance and avoid abrupt control inputs.")
+    if evidence["road_counts"].get("rough", 0) or evidence["road_counts"].get("impact", 0):
+        recommendations.append("Reduce speed on rough or impact-classified surfaces and keep both hands/control inputs steady.")
+    if not recommendations:
+        recommendations.append("Continue smooth acceleration, braking, and cornering; keep monitoring the live behavior indicators.")
     return {
         "session_overview": {"session_id": session.get("session_id"), "started_at": session.get("started_at"), "ended_at": session.get("ended_at"), "snapshot_count": evidence["snapshot_count"]},
-        "battery_analysis": {"stressed_snapshot_count": evidence["stressed_snapshot_count"]},
-        "driving_behavior_analysis": evidence["behavior_counts"],
+        "driver_score": round(max(0.0, 100.0 * (1.0 - aggressive / total)), 1),
+        "driving_behavior_analysis": {"counts": behavior, "non_normal_share": round(aggressive / total, 3)},
+        "observed_strengths": ["The session was recorded with multimodal telemetry."],
+        "areas_to_improve": ["Reduce non-normal driving events." if aggressive else "No repeated non-normal behavior was observed in this sample."],
+        "next_drive_recommendations": recommendations,
         "road_condition_analysis": evidence["road_counts"],
         "cause_attribution_summary": evidence["cause_counts"],
         "significant_events": evidence["events"],

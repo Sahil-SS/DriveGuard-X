@@ -10,7 +10,7 @@ import {
   stopSession,
   Snapshot,
 } from "./api";
-import { Gauge, Trend } from "./visuals";
+import { Gauge, LiveMeter, Trend } from "./visuals";
 
 const labels: Record<string, string> = {
   normal: "Normal operation",
@@ -82,6 +82,13 @@ export default function Dashboard() {
       .catch(() => setHistory([]));
   }, []);
   const fused = snap.fused;
+  const raw = {
+    v: snap.battery?.features?.voltage_final,
+    i: snap.battery?.features?.current_mean,
+    t: snap.battery?.features?.temperature_final,
+    gz: snap.imu?.samples?.[snap.imu?.samples?.length - 1]?.GyroZ,
+    rd: snap.road?.road_class,
+  };
   const age = fused
     ? Math.round((now - new Date(fused.timestamp).getTime()) / 1000)
     : null;
@@ -144,6 +151,10 @@ export default function Dashboard() {
         </div>
       </header>
       <section className="grid">
+        <article className="panel telemetry-panel wide">
+          <div className="panel-heading"><div><div className="eyebrow">LIVE TELEMETRY / ESP32</div><h2>Live instrument panel</h2></div><span className="live-badge">{raw.rd || "WAITING"}</span></div>
+          <div className="meter-grid"><LiveMeter value={raw.v ?? null} max={5} label="PACK VOLTAGE" unit="V" /><LiveMeter value={raw.i ?? null} max={10} label="BATTERY CURRENT" unit="A" /><LiveMeter value={raw.t ?? null} max={100} label="TEMPERATURE" unit="°C" /><LiveMeter value={Math.abs(raw.gz ?? 0)} max={5} label="TURN RATE" unit="rad/s" /></div>
+        </article>
         <article className="panel chart-panel wide">
           <div className="panel-heading"><div><div className="eyebrow">LIVE TREND / BATTERY AI</div><h2>State of health trajectory</h2></div><span className="live-badge">{samples.length} EVENTS</span></div>
           <Trend values={samples.map((item) => Number(item.fused?.battery_state?.soh_percent || 0))} />
@@ -269,14 +280,12 @@ export default function Dashboard() {
             </li>
           </ul>
         </article>
-        {report?.report && (
-          <article className="panel history">
-            <h2>DRIVER REPORT · {report.report_status}</h2>
-            <div className="report">
-              {JSON.stringify(report.report, null, 2)}
-            </div>
-          </article>
-        )}
+        {report?.report && <article className="panel history driver-report">
+          <div className="row"><div><div className="eyebrow">GROQ-ASSISTED ANALYSIS</div><h2>DRIVER REPORT</h2></div><span className="live-badge">{report.report_status}</span></div>
+          <div className="report-summary"><div className="report-score">{report.report.driver_score ?? "--"}<small>/ 100</small></div><div><strong>Driving behavior review</strong><p className="muted">Recommendations are based on recorded behavior, road conditions, and attribution evidence.</p></div></div>
+          <div className="report-columns"><div><h3>Observed strengths</h3><ul>{(report.report.observed_strengths || []).map((x: string, i: number) => <li key={i}>{x}</li>)}</ul></div><div><h3>Areas to improve</h3><ul>{(report.report.areas_to_improve || []).map((x: string, i: number) => <li key={i}>{x}</li>)}</ul></div><div><h3>Next drive</h3><ul>{(report.report.next_drive_recommendations || report.report.recommendations || []).map((x: string, i: number) => <li key={i}>{x}</li>)}</ul></div></div>
+          <details><summary>Evidence and limitations</summary><pre className="report">{JSON.stringify({ driving_behavior_analysis: report.report.driving_behavior_analysis, cause_attribution_summary: report.report.cause_attribution_summary, limitations: report.report.limitations }, null, 2)}</pre></details>
+        </article>}
         <article className="panel history">
           <h2>SESSION HISTORY</h2>
           <table>
